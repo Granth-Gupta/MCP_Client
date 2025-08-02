@@ -117,7 +117,7 @@ async def get_tools_for_prompt() -> List[Dict[str, Any]]:
 
 def setup_gemini() -> bool:
     global gemini_model
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY", "AIzaSyBALpQAczrx3jCy7xPYiuFVOGZax9k-ALk")
     if not api_key:
         logger.warning("Missing GEMINI_API_KEY")
         return False
