@@ -1,9 +1,3 @@
-"""
-MCP Client Web API - FastAPI-based service to interact with MCP servers and Gemini LLM.
-Adapted for idiomatic FastAPI usage and proper async resource lifecycle.
-Uses direct genai.generate_text() API (no TextGenerationModel).
-"""
-
 import asyncio
 import json
 import logging
@@ -48,9 +42,12 @@ app.add_middleware(
 employee_client: Optional[Client] = None
 leave_client: Optional[Client] = None
 available_tools: Dict[str, Dict[str, Any]] = {}
-gemini_initialized = False  # boolean flag for gemini config success
+
+gemini_model = None  # Holds the generative model instance
+gemini_initialized = False
 startup_time = datetime.utcnow()
 is_initialized = False
+
 
 # =====================
 # Pydantic Schemas
@@ -62,6 +59,7 @@ class ChatResponse(BaseModel):
     response: str
     tools_used: List[str] = []
     timestamp: str
+
 
 # =====================
 # Utility Functions
@@ -81,10 +79,10 @@ def get_server_config() -> List[Dict[str, Any]]:
     ]
 
 async def test_mcp_connection(client: Optional[Client], server_name: str) -> bool:
+    if not client:
+        logger.warning(f"No MCP client for {server_name}")
+        return False
     try:
-        if not client:
-            logger.warning(f"No MCP client for {server_name}")
-            return False
         result = await client.list_tools()
         return bool(result)
     except Exception as e:
@@ -92,10 +90,6 @@ async def test_mcp_connection(client: Optional[Client], server_name: str) -> boo
         return False
 
 def _extract_tool_info(tool: Any) -> Tuple[str, str, Dict[str, Any]]:
-    """
-    Extract tool name, description, and input parameters safely supporting both
-    object and dictionary-like tool representations.
-    """
     if isinstance(tool, dict):
         name = tool.get("name", "")
         desc = tool.get("description", "")
@@ -137,20 +131,23 @@ async def get_tools_for_prompt() -> List[Dict[str, Any]]:
     ]
 
 def setup_gemini() -> bool:
-    global gemini_initialized
+    global gemini_model, gemini_initialized
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         logger.warning("Missing GEMINI_API_KEY")
         gemini_initialized = False
+        gemini_model = None
         return False
     try:
         genai.configure(api_key=api_key)
+        gemini_model = genai.GenerativeModel("models/text-bison-001")
         gemini_initialized = True
-        logger.info("Gemini API configured successfully.")
+        logger.info("Gemini model initialized successfully")
         return True
     except Exception as e:
-        logger.error(f"Failed to configure Gemini API: {e}")
+        logger.error(f"Failed to initialize Gemini model: {e}")
         gemini_initialized = False
+        gemini_model = None
         return False
 
 async def setup_mcp_clients() -> bool:
@@ -204,7 +201,7 @@ def parse_gemini_response(response_text: str) -> Tuple[bool, Optional[str], Opti
         return False, None, None
 
 async def cleanup():
-    global employee_client, leave_client, available_tools, gemini_initialized
+    global employee_client, leave_client, available_tools, gemini_initialized, gemini_model
     available_tools = {}
     if employee_client is not None:
         try:
@@ -219,11 +216,12 @@ async def cleanup():
             pass
     leave_client = None
     gemini_initialized = False
+    gemini_model = None
+
 
 # =====================
 # FastAPI Lifecycle and Routes
 # =====================
-
 @app.on_event("startup")
 async def on_startup():
     global is_initialized
@@ -279,8 +277,9 @@ async def tools():
 
 @app.post("/chat", response_model=ChatResponse, tags=["Chat"])
 async def chat_endpoint(request: ChatRequest):
-    if not is_initialized or not gemini_initialized:
+    if not is_initialized or not gemini_initialized or gemini_model is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not initialized")
+
     tool_descriptions = "\n".join(
         f"- {t['name']} : {t['description']}"
         for t in await get_tools_for_prompt()
@@ -290,8 +289,7 @@ async def chat_endpoint(request: ChatRequest):
 
     tools_used: List[str] = []
     try:
-        # Use the latest genai.generate_text call directly
-        response = genai.generate_text(model="models/text-bison-001", prompt=prompt)
+        response = gemini_model.generate_content(prompt)
         text_response = response.text if hasattr(response, "text") else str(response)
 
         is_tool_call, tool_name, params = parse_gemini_response(text_response)
@@ -301,7 +299,7 @@ async def chat_endpoint(request: ChatRequest):
             final_prompt = (
                 f"{prompt}\nTool: {json.dumps({'tool_name': tool_name, 'result': tool_result})}\nPlease provide a summary."
             )
-            final_response = genai.generate_text(model="models/text-bison-001", prompt=final_prompt)
+            final_response = gemini_model.generate_content(final_prompt)
             final_text = final_response.text if hasattr(final_response, "text") else str(final_response)
         else:
             final_text = text_response
@@ -309,8 +307,10 @@ async def chat_endpoint(request: ChatRequest):
         timestamp = datetime.utcnow().isoformat()
         return ChatResponse(response=final_text, tools_used=tools_used, timestamp=timestamp)
     except Exception as e:
+        import traceback
         logger.error(f"Chat processing error: {e}")
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        logger.error(traceback.format_exc())
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e) or repr(e))
 
 # ===============
 # MAIN LAUNCHER (for local run)
