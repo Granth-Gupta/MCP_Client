@@ -256,7 +256,13 @@ async def health():
     employee_ok = await test_mcp_connection(employee_client, "employee_server")
     leave_ok = await test_mcp_connection(leave_client, "leave_server")
     overall_status = "healthy" if employee_ok and leave_ok else "degraded"
-    return {"status": overall_status}
+    return {
+        "status": overall_status,
+        "employees_connected": employee_ok,
+        "leave_connected": leave_ok,
+        "service": "MCP Client API",
+        "port": int(os.getenv("PORT", 8080))
+    }
 
 @app.get("/tools", tags=["Tools"])
 async def tools():
