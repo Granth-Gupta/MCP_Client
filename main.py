@@ -29,7 +29,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://your-frontend-domain.com",  # TODO: Replace with actual frontend domain(s)
+        "https://client-ui-273927490120.us-central1.run.app",  # TODO: Replace with actual frontend domain(s)
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:5174"
