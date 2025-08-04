@@ -140,7 +140,9 @@ def setup_gemini() -> bool:
         return False
     try:
         genai.configure(api_key=api_key)
-        gemini_model = genai.GenerativeModel("models/text-bison-001")
+        # gemini_model = genai.GenerativeModel("models/text-bison-001")
+        gemini_model = genai.GenerativeModel("models/gemini-2.0-flash")
+
         gemini_initialized = True
         logger.info("Gemini model initialized successfully")
         return True
